@@ -70,15 +70,18 @@ class Model(object):
 
         l_linear = Linear(input_dim=U.shape[1], output_dim=hidden_size)
         if encoder.find('lstm') > -1:
-            l_recurrent = SimpleRecurrent(dim=hidden_size, activation=Tanh())
-        else:
             l_recurrent = LSTM(dim=hidden_size, activation=Tanh())
+        else:
+            l_recurrent = SimpleRecurrent(dim=hidden_size, activation=Tanh())
 
         initialize([l_linear], W=initialization.Orthogonal(), b=initialization.Constant(0))
         initialize([l_recurrent], W=initialization.Orthogonal(), b=initialization.Constant(0))
 
-        h_context = l_recurrent.apply(l_linear.apply(c_input), c_mask)
-        h_response = l_recurrent.apply(l_linear.apply(r_input), r_mask)
+        h_context = l_recurrent.apply(l_linear.apply(c_input), mask=c_mask)
+        h_response = l_recurrent.apply(l_linear.apply(r_input), mask=r_mask)
+        if encoder.find('lstm') > -1:
+            h_context = h_context[0]
+            h_response = h_response[0]
 
         e_context = h_context[T.arange(batch_size), c_seqlen].reshape((c.shape[0], hidden_size))
         e_response = h_response[T.arange(batch_size), r_seqlen].reshape((r.shape[0], hidden_size))
@@ -114,7 +117,8 @@ class Model(object):
         self.update_params()
 
     def update_params(self):
-        params = list(self.l_linear.parameters) + list(self.l_recurrent.parameters)
+        params = list(self.l_linear.parameters) + list(self.l_recurrent.parameters)[:-1]
+        print params
         for p in params:
             print p.get_value().shape
 
