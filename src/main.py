@@ -27,20 +27,6 @@ def initialize(L, W, b):
         bricks.biases_init = b
         bricks.initialize()
 
-def rnn_layer(dim, h):
-    linear = Linear(input_dim=dim, output_dim=dim)
-    rnn = SimpleRecurrent(dim=dim, activation=Tanh())
-    initialize([linear], W=initialization.Uniform(width=0.01), b=initialization.Constant(0))
-    initialize([rnn], W=initialization.Orthogonal(), b=initialization.Constant(0))
-    return rnn.apply(linear.apply(h)), rnn, linear
-
-def lstm_layer(dim, h):
-    linear = Linear(input_dim=dim, output_dim=dim * 4)
-    lstm = LSTM(dim=dim)
-    initialize([linear], W=initialization.Uniform(width=0.01), b=initialization.Constant(0))
-    initialize([lstm], W=initialization.Orthogonal(), b=initialization.Constant(0))
-    return lstm.apply(linear.apply(h))[0], lstm, linear
-
 class Model(object):
     def __init__(self,
                  data,
@@ -69,6 +55,8 @@ class Model(object):
         c = T.imatrix('c')
         r = T.imatrix('r')
         y = T.ivector('y')
+        c_mask = T.fmatrix('c_mask')
+        r_mask = T.fmatrix('r_mask')
         c_seqlen = T.ivector('c_seqlen')
         r_seqlen = T.ivector('r_seqlen')
         embeddings = theano.shared(U, name='embeddings', borrow=True)
@@ -80,13 +68,20 @@ class Model(object):
         c_input = embeddings[c.flatten()].reshape((c.shape[0], c.shape[1], embeddings.shape[1]))
         r_input = embeddings[r.flatten()].reshape((r.shape[0], r.shape[1], embeddings.shape[1]))
 
+        l_linear = Linear(input_dim=U.shape[1], output_dim=hidden_size)
         if encoder.find('lstm') > -1:
-            h, l_recurrent, l_linear = lstm_layer(hidden_size, c_input)
+            l_recurrent = SimpleRecurrent(dim=hidden_size, activation=Tanh())
         else:
-            h, l_recurrent, l_linear = rnn_layer(hidden_size, c_input)
+            l_recurrent = LSTM(dim=hidden_size, activation=Tanh())
 
-        e_context = h[T.arange(batch_size), c_seqlen].reshape((c.shape[0], hidden_size))
-        e_response = h[T.arange(batch_size), r_seqlen].reshape((r.shape[0], hidden_size))
+        initialize([l_linear], W=initialization.Orthogonal(), b=initialization.Constant(0))
+        initialize([l_recurrent], W=initialization.Orthogonal(), b=initialization.Constant(0))
+
+        h_context = l_recurrent.apply(l_linear.apply(c_input), c_mask)
+        h_response = l_recurrent.apply(l_linear.apply(r_input), r_mask)
+
+        e_context = h_context[T.arange(batch_size), c_seqlen].reshape((c.shape[0], hidden_size))
+        e_response = h_response[T.arange(batch_size), r_seqlen].reshape((r.shape[0], hidden_size))
 
         dp = T.batched_dot(e_context, T.dot(e_response, self.M.T))
         #dp = pp('dp')(dp)
@@ -96,6 +91,8 @@ class Model(object):
         self.shared_data = {}
         for key in ['c', 'r']:
             self.shared_data[key] = theano.shared(np.zeros((batch_size, img_h), dtype=np.int32))
+        for key in ['c_mask', 'r_mask']:
+            self.shared_data[key] = theano.shared(np.zeros((batch_size, img_h), dtype=theano.config.floatX))
         for key in ['y', 'c_seqlen', 'r_seqlen']:
             self.shared_data[key] = theano.shared(np.zeros((batch_size,), dtype=np.int32))
 
@@ -109,6 +106,8 @@ class Model(object):
         self.c = c
         self.r = r
         self.y = y
+        self.c_mask = c_mask
+        self.r_mask = r_mask
         self.c_seqlen = c_seqlen
         self.r_seqlen = r_seqlen
 
@@ -140,6 +139,8 @@ class Model(object):
             self.y: self.shared_data['y'],
             self.c_seqlen: self.shared_data['c_seqlen'],
             self.r_seqlen: self.shared_data['r_seqlen'],
+            self.c_mask: self.shared_data['c_mask'],
+            self.r_mask: self.shared_data['r_mask']
         }
         self.train_model = theano.function([], self.cost, updates=updates, givens=givens, on_unused_input='warn')
         self.get_loss = theano.function([], self.errors, givens=givens, on_unused_input='warn')
@@ -166,6 +167,8 @@ class Model(object):
         self.shared_data['y'].set_value(y)
         self.shared_data['c_seqlen'].set_value(c_seqlen)
         self.shared_data['r_seqlen'].set_value(r_seqlen)
+        self.shared_data['c_mask'].set_value(c_mask)
+        self.shared_data['r_mask'].set_value(r_mask)
 
     def compute_loss(self, dataset, index):
         self.set_shared_variables(dataset, index)
