@@ -97,6 +97,7 @@ class Model(object):
                  penalize_emb_norm=False,
                  penalize_emb_drift=False,
                  emb_penalty=10,
+                 k=4,
                  n_recurrent_layers=1,
                  is_bidirectional=False):
         self.data = data
@@ -131,10 +132,11 @@ class Model(object):
         if encoder.find('cnn') > -1 and (encoder.find('rnn') > -1 or encoder.find('lstm') > -1) and not elemwise_sum:
             self.M = theano.shared(np.eye(2*hidden_size).astype(theano.config.floatX), borrow=True)
         elif use_ntn:
-            self.U = theano.shared(np.random.rand((k)).astype(theano.config.floatX), borrow=True)
-            self.V = theano.shared(np.random.rand(k, 2*hidden_size).astype(theano.config.floatX), borrow=True)
-            self.b = theano.shared(np.random.rand((k)).astype(theano.config.floatX), borrow=True)
-            self.M = theano.shared(np.random.rand((hidden_size, hidden_size, k))).astype(theano.config.floatX), borrow=True)
+            self.U = theano.shared(np.random.uniform(-0.01, 0.01, size=(k,)).astype(theano.config.floatX), borrow=True)
+            self.V = theano.shared(np.random.uniform(-0.01, 0.01, size=(k, 2*hidden_size)).astype(theano.config.floatX), borrow=True)
+            self.b = theano.shared(np.random.uniform(-0.01, 0.01, size=(k,)).astype(theano.config.floatX), borrow=True)
+            self.M = theano.shared(np.random.uniform(-0.01, 0.01, size=(k, hidden_size, hidden_size)).astype(theano.config.floatX), borrow=True)
+            self.f = lasagne.nonlinearities.tanh
         else:
             self.M = theano.shared(np.eye(hidden_size).astype(theano.config.floatX), borrow=True)
 
@@ -317,7 +319,12 @@ class Model(object):
                 e_context = e_conv_context
                 e_response = e_conv_response
 
-        dp = T.batched_dot(e_context, T.dot(e_response, self.M.T))
+        if use_ntn:
+            dp = T.concatenate([T.batched_dot(e_context, T.dot(e_response, self.M[i])) for i in xrange(k)], axis=1)
+            dp += T.concatenate([e_context, e_response], axis=1).dot(self.V.T) + self.b
+            dp = self.f(dp).dot(self.U)
+        else:
+            dp = T.batched_dot(e_context, T.dot(e_response, self.M.T))
         #dp = pp('dp')(dp)
         o = T.nnet.sigmoid(dp)
         o = T.clip(o, 1e-7, 1.0-1e-7)
@@ -361,11 +368,13 @@ class Model(object):
 
     def update_params(self):
         params = lasagne.layers.get_all_params(self.l_out)
+        if self.use_ntn:
+            params += [self.U, self.V, self.M, self.b]
         if self.conv_attn:
             params += lasagne.layers.get_all_params(self.l_recurrent)
         if self.fine_tune_W:
             params += [self.embeddings]
-        if self.fine_tune_M:
+        if self.fine_tune_M and not self.use_ntn:
             params += [self.M]
 
         total_params = sum([p.get_value().size for p in params])
@@ -606,7 +615,9 @@ def main():
   parser.add_argument('--sort_by_len', type='bool', default=False, help='Whether to sort contexts by length')
   parser.add_argument('--penalize_emb_norm', type='bool', default=False, help='Whether to penalize norm of embeddings')
   parser.add_argument('--penalize_emb_drift', type='bool', default=False, help='Whether to use re-embedding words penalty')
-  parser.add_argument('--emb_penalty', type=float, default=100, help='Embedding penalty')
+  parser.add_argument('--emb_penalty', type=float, default=0.0001, help='Embedding penalty')
+  parser.add_argument('--use_ntn', type='bool', default=False, help='Whether to use NTN')
+  parser.add_argument('--k', type=int, default=4, help='Size of k in NTN')
   args = parser.parse_args()
   print "args: ", args
 
@@ -652,6 +663,8 @@ def main():
                 emb_penalty=args.emb_penalty,
                 penalize_emb_norm=args.penalize_emb_norm,
                 penalize_emb_drift=args.penalize_emb_drift,
+                use_ntn=args.use_ntn,
+                k=args.k,
                 n_recurrent_layers=args.n_recurrent_layers,
                 conv_attn=args.conv_attn)
 
