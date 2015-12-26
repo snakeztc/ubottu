@@ -320,7 +320,7 @@ class Model(object):
                 e_response = e_conv_response
 
         if use_ntn:
-            dp = T.concatenate([T.batched_dot(e_context, T.dot(e_response, self.M[i])) for i in xrange(k)], axis=1)
+            dp = T.concatenate([T.batched_dot(e_context, T.dot(e_response, self.M[i].T)).reshape((-1, 1)) for i in xrange(k)], axis=1)
             dp += T.concatenate([e_context, e_response], axis=1).dot(self.V.T) + self.b
             dp = self.f(dp).dot(self.U)
         else:
