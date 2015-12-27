@@ -436,7 +436,7 @@ class Model(object):
     def train(self, n_epochs=100, shuffle_batch=False):
         epoch = 0
         best_val_perf = 0
-        best_val_rk1 = 0
+        best_val_rk = { 10: { 1: 0, 2: 0, 5: 0 }, 2: { 1: 0 } }
         test_perf = 0
         cost_epoch = 0
 
@@ -469,9 +469,9 @@ class Model(object):
             val_probas = np.concatenate([self.compute_probas(self.data['val'], i) for i in xrange(n_val_batches)])
             val_recall_k = self.compute_recall_ks(val_probas)
 
-            if val_perf > best_val_perf or val_recall_k[10][1] > best_val_rk1:
+            if val_perf > best_val_perf or val_recall_k[10][1] > best_val_rk[10][1] or val_recall_k[2][1] > best_val_rk[2][1] or val_recall_k[10][2] > best_val_rk[10][2] or val_recall_k[10][5] > best_val_rk[10][5]:
                 best_val_perf = val_perf
-                best_val_rk1 = val_recall_k[10][1]
+                best_val_rk = val_recall_k
                 test_losses = [self.compute_loss(self.data['test'], i) for i in xrange(n_test_batches)]
                 test_perf = 1 - np.sum(test_losses) / len(self.data['test']['y'])
                 print 'test_perf: %f' % (test_perf*100)
