@@ -6,6 +6,6 @@ embeddings
 *.pyc
 .ipynb_checkpoints/
 *.csv
-dataset_1000000_updated/
+dataset_1000000_updated
 output_*
 *.txt
